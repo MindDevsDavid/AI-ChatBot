@@ -1,0 +1,27 @@
+{
+  "name": "chatbot",
+  "version": "1.0.0",
+  "description": "ChatBot IA para WhatsApp con Gemini",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MindDevsDavid/AI-ChatBot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/MindDevsDavid/AI-ChatBot/issues"
+  },
+  "homepage": "https://github.com/MindDevsDavid/AI-ChatBot#readme",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.4.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.6"
+  }
+}
