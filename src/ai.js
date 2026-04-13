@@ -1,21 +1,25 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Groq = require("groq-sdk");
 const config = require("./config");
 
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
-  systemInstruction: config.systemPrompt,
-});
+const groq = new Groq({ apiKey: config.groqApiKey });
 
 /**
- * Envía un mensaje a Gemini y retorna la respuesta.
+ * Envía un mensaje a Groq y retorna la respuesta.
  * @param {string} userMessage - Mensaje del usuario
  * @returns {Promise<string>} Respuesta de la IA
  */
 async function getAIResponse(userMessage) {
-  const result = await model.generateContent(userMessage);
-  let text = result.response.text();
+  const chatCompletion = await groq.chat.completions.create({
+    messages: [
+      { role: "system", content: config.systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+    model: config.model,
+    temperature: 0.7,
+    max_completion_tokens: 512,
+  });
+
+  let text = chatCompletion.choices[0].message.content;
 
   // Limitar longitud de respuesta
   if (text.length > config.maxResponseLength) {

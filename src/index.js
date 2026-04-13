@@ -3,10 +3,10 @@ const { getAIResponse } = require("./ai");
 const config = require("./config");
 
 // Validar que la API key esté configurada
-if (!config.geminiApiKey || config.geminiApiKey === "tu_api_key_aqui") {
+if (!config.groqApiKey || config.groqApiKey === "tu_api_key_aqui") {
   console.error(
-    "❌ Falta configurar GEMINI_API_KEY en el archivo .env\n" +
-      "   Obtén tu API key gratis en: https://aistudio.google.com/apikey"
+    "❌ Falta configurar GROQ_API_KEY en el archivo .env\n" +
+      "   Obtén tu API key gratis en: https://console.groq.com/keys"
   );
   process.exit(1);
 }
