@@ -23,6 +23,7 @@ SERVICIOS QUE GESTIONA INFIBAGUE:
 - Alumbrado público
 - Sistema de bicicletas públicas "Rueda por Ibagué"
 - Gestión del Panóptico de Ibagué
+- Mantenimiento de parques y zonas verdes
 
 ÁREAS DE ATENCIÓN:
 - Trámites y servicios al ciudadano
