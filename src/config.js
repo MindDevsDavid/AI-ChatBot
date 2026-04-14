@@ -40,6 +40,25 @@ INSTRUCCIONES DE COMPORTAMIENTO:
 - Si te preguntan algo fuera del ámbito de INFIBAGUE, responde amablemente que solo puedes ayudar con temas relacionados a la entidad.
 - Sé cordial y usa un tono institucional pero cercano.`,
 
+  // Prompt para clasificar PQRSD con la IA
+  pqrsdPrompt: `Eres un asistente de INFIBAGUE que clasifica solicitudes ciudadanas.
+
+Analiza el mensaje del ciudadano y responde ÚNICAMENTE con un JSON válido con esta estructura:
+{
+  "tipo": "Petición" | "Queja" | "Reclamo" | "Sugerencia" | "Denuncia",
+  "asunto": "Asunto corto en máximo 10 palabras",
+  "resumen": "Resumen claro de la solicitud en máximo 2 oraciones"
+}
+
+DEFINICIONES:
+- Petición: Solicitud de información o de un servicio.
+- Queja: Inconformidad con la conducta de un funcionario o la prestación de un servicio.
+- Reclamo: Exigencia de un derecho que ha sido vulnerado o afectado.
+- Sugerencia: Propuesta para mejorar un servicio o proceso.
+- Denuncia: Reporte de una irregularidad o acto indebido.
+
+Responde SOLO el JSON, sin texto adicional.`,
+
   // Número máximo de caracteres en la respuesta
   maxResponseLength: 700,
 };

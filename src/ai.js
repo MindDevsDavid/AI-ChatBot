@@ -4,9 +4,7 @@ const config = require("./config");
 const groq = new Groq({ apiKey: config.groqApiKey });
 
 /**
- * Envía un mensaje a Groq y retorna la respuesta.
- * @param {string} userMessage - Mensaje del usuario
- * @returns {Promise<string>} Respuesta de la IA
+ * Envía un mensaje a Groq y retorna la respuesta (consultas generales).
  */
 async function getAIResponse(userMessage) {
   const chatCompletion = await groq.chat.completions.create({
@@ -21,7 +19,6 @@ async function getAIResponse(userMessage) {
 
   let text = chatCompletion.choices[0].message.content;
 
-  // Limitar longitud de respuesta
   if (text.length > config.maxResponseLength) {
     text = text.substring(0, config.maxResponseLength) + "...";
   }
@@ -29,4 +26,24 @@ async function getAIResponse(userMessage) {
   return text;
 }
 
-module.exports = { getAIResponse };
+/**
+ * Clasifica una PQRSD y genera un resumen estructurado.
+ * Retorna un objeto JSON con: tipo, resumen, asunto.
+ */
+async function classifyPQRSD(userMessage) {
+  const chatCompletion = await groq.chat.completions.create({
+    messages: [
+      { role: "system", content: config.pqrsdPrompt },
+      { role: "user", content: userMessage },
+    ],
+    model: config.model,
+    temperature: 0.3,
+    max_completion_tokens: 300,
+    response_format: { type: "json_object" },
+  });
+
+  const text = chatCompletion.choices[0].message.content;
+  return JSON.parse(text);
+}
+
+module.exports = { getAIResponse, classifyPQRSD };
