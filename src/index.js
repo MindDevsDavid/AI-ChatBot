@@ -1,6 +1,7 @@
+const { MessageMedia } = require("whatsapp-web.js");
 const { createWhatsAppClient } = require("./whatsapp");
 const { getAIResponse } = require("./ai");
-const { handleFlow, isFlowCompleted, getUserData } = require("./flow");
+const { handleFlow, isFlowCompleted, getUserData, POLICY_PDF_PATH } = require("./flow");
 const config = require("./config");
 
 // Validar que la API key esté configurada
@@ -26,6 +27,14 @@ const client = createWhatsAppClient(async (message) => {
     // Si el usuario NO ha completado el formulario, manejar el flujo
     if (!isFlowCompleted(userId)) {
       const result = handleFlow(userId, message.body);
+
+      // Enviar el PDF de política de datos si el flujo lo indica
+      if (result.sendPolicy) {
+        const policyPdf = MessageMedia.fromFilePath(POLICY_PDF_PATH);
+        await chat.sendMessage(policyPdf, {
+          caption: "📄 Política de Tratamiento de Datos Personales - INFIBAGUE",
+        });
+      }
 
       if (result.response) {
         await message.reply(result.response);
