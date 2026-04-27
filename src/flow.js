@@ -1,44 +1,120 @@
 /**
- * Maneja el flujo de conversación por usuario.
+ * INFIBOT - Flujo completo de conversación
  *
- * Flujo completo:
- * greeting → wait_policy → ask_name → ask_email → ask_phone
- * → menu → (PQRSD | Consultas | Atención Personal)
+ * FASE 1: Bienvenida y Registro
+ *   greeting → ask_name → ask_email → ask_phone → send_policy → wait_policy
  *
- * Flujo PQRSD:
- * pqrsd_describe → pqrsd_confirm → pqrsd_done → menu
+ * FASE 2: Menú Principal
+ *   menu → (1: consultas | 2: pqr | 3: humano | 4: salir)
  *
- * Flujo Consultas:
- * consultas (responde IA, vuelve a menu con "menu")
+ * FASE 3: Ramas
+ *   A) Consultas:  consultas → IA responde → (MENU para volver)
+ *   B) PQR:        pqr_area → pqr_type → pqr_describe → pqr_confirm → radicado → encuesta
+ *   C) Humano:     human_check → (ticket si horario laboral | mensaje si no) → encuesta
+ *
+ * FASE 4: Finalización
+ *   survey_rating → survey_comment → goodbye
  */
 
 const path = require("path");
 
 const sessions = new Map();
-
 const POLICY_PDF_PATH = path.join(__dirname, "..", "assets", "politica-datos.pdf");
 
-// Contador global para números de radicado
+// ─── CONTADOR DE RADICADOS ──────────────────────────────────────────
 let radicadoCounter = 1000;
 
 function generateRadicado() {
   radicadoCounter++;
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `RAD-${year}${month}${day}-${radicadoCounter}`;
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  return `RAD-${ymd}-${radicadoCounter}`;
 }
 
-// Texto del menú principal (reutilizable)
+// ─── HORARIO LABORAL ────────────────────────────────────────────────
+function isBusinessHours() {
+  const now = new Date();
+  // Ajustar a hora Colombia (UTC-5)
+  const utcHour = now.getUTCHours();
+  const colombiaHour = (utcHour - 5 + 24) % 24;
+  const colombiaMinutes = now.getUTCMinutes();
+  const day = now.getUTCDay(); // 0=Dom, 1=Lun...6=Sab
+
+  // Sábado y Domingo: cerrado
+  if (day === 0 || day === 6) return false;
+
+  const timeInMinutes = colombiaHour * 60 + colombiaMinutes;
+
+  // Viernes: 7:00am - 3:00pm
+  if (day === 5) {
+    return timeInMinutes >= 420 && timeInMinutes < 900;
+  }
+
+  // Lunes a Jueves: 7:00am-12:00pm y 2:00pm-5:00pm
+  const morning = timeInMinutes >= 420 && timeInMinutes < 720;
+  const afternoon = timeInMinutes >= 840 && timeInMinutes < 1020;
+  return morning || afternoon;
+}
+
+// ─── TEXTOS REUTILIZABLES ───────────────────────────────────────────
+
 const MENU_TEXT =
-  "📋 *¿Qué deseas hacer?*\n\n" +
-  "*1.* 📝 PQRSD (Peticiones, Quejas, Reclamos, Sugerencias, Denuncias)\n" +
-  "*2.* 💬 Consultas\n" +
-  "*3.* 👤 Atención Personal\n\n" +
+  "📋 *Menú Principal*\n\n" +
+  "*1.* 💬 Realizar una pregunta\n" +
+  "*2.* 📝 Radicar un PQR (Petición, Queja o Recurso)\n" +
+  "*3.* 👤 Atención personal (humana)\n" +
+  "*4.* 🚪 Salir\n\n" +
   "Escribe el *número* de la opción:";
 
-// Validaciones
+const PQR_AREAS_TEXT =
+  "🏢 *Selecciona el área de tu PQR:*\n\n" +
+  "*1.* 💡 Alumbrado Público\n" +
+  "*2.* 🌳 Parques y Zonas Verdes\n" +
+  "*3.* 🚲 Sistema de Bicicletas\n" +
+  "*4.* 🏪 Plazas de Mercado\n" +
+  "*5.* 🏛️ Complejo Panóptico / Plazoleta de Artesanos\n" +
+  "*6.* 🏠 Inmuebles / Financiación\n\n" +
+  "Escribe el *número* del área:";
+
+const PQR_AREAS_MAP = {
+  "1": "Alumbrado Público",
+  "2": "Parques y Zonas Verdes",
+  "3": "Sistema de Bicicletas",
+  "4": "Plazas de Mercado",
+  "5": "Complejo Panóptico / Plazoleta de Artesanos",
+  "6": "Inmuebles / Financiación",
+};
+
+const PQR_TYPE_TEXT =
+  "📌 *Selecciona el tipo de solicitud:*\n\n" +
+  "*1.* 📄 Petición (solicitud de información o servicio)\n" +
+  "*2.* 😤 Queja (inconformidad con un servicio o funcionario)\n" +
+  "*3.* ⚖️ Recurso (exigencia de un derecho vulnerado)\n\n" +
+  "Escribe el *número* del tipo:";
+
+const PQR_TYPES_MAP = {
+  "1": "Petición",
+  "2": "Queja",
+  "3": "Recurso",
+};
+
+const SURVEY_TEXT =
+  "📊 *Encuesta de Satisfacción*\n\n" +
+  "¿Cómo calificarías tu experiencia con InfiBot?\n\n" +
+  "*1.* ⭐ Muy mala\n" +
+  "*2.* ⭐⭐ Mala\n" +
+  "*3.* ⭐⭐⭐ Regular\n" +
+  "*4.* ⭐⭐⭐⭐ Buena\n" +
+  "*5.* ⭐⭐⭐⭐⭐ Excelente\n\n" +
+  "Escribe el *número* de tu calificación:";
+
+const GOODBYE_TEXT =
+  "👋 ¡Gracias por comunicarte con *INFIBAGUÉ*!\n\n" +
+  "Si necesitas ayuda nuevamente, puedes escribirnos en cualquier momento.\n\n" +
+  "¡Que tengas un excelente día! 🌟";
+
+// ─── VALIDACIONES ───────────────────────────────────────────────────
+
 function isValidEmail(text) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim());
 }
@@ -48,37 +124,82 @@ function isValidPhone(text) {
   return /^\d{7,15}$/.test(cleaned);
 }
 
+// ─── SESIONES ───────────────────────────────────────────────────────
+
 function getSession(userId) {
   if (!sessions.has(userId)) {
-    sessions.set(userId, { step: "greeting", data: {} });
+    sessions.set(userId, { step: "greeting", data: {}, pqr: {} });
   }
   return sessions.get(userId);
 }
 
+// ─── FLUJO PRINCIPAL ────────────────────────────────────────────────
+
 /**
- * Procesa un mensaje según el estado actual del usuario.
- * @param {string} userId
- * @param {string} messageBody
- * @returns {{ response: string, sendPolicy: boolean, useAI: string|null }}
- *   - response: texto a enviar (null si lo maneja index.js)
- *   - sendPolicy: si debe enviar el PDF de política
- *   - useAI: null = no usar IA, "consulta" = consulta libre, "pqrsd" = clasificar PQRSD
+ * @returns {{
+ *   response: string|null,
+ *   sendPolicy: boolean,
+ *   useAI: "consulta"|"pqr_classify"|null
+ * }}
  */
 function handleFlow(userId, messageBody) {
   const session = getSession(userId);
   const text = messageBody.trim().toLowerCase();
+  const original = messageBody.trim();
 
   switch (session.step) {
-    // ─── REGISTRO INICIAL ───────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 1: BIENVENIDA Y REGISTRO
+    // ═══════════════════════════════════════════════════════════════
 
     case "greeting":
+      session.step = "ask_name";
+      return reply(
+        "👋 *¡Hola! Soy InfiBot*, el asistente virtual de *INFIBAGUÉ*.\n\n" +
+          "Estoy aquí para ayudarte con tus trámites y consultas.\n\n" +
+          "Antes de empezar, necesito algunos datos.\n\n" +
+          "📝 Por favor, escribe tu *nombre completo*:"
+      );
+
+    case "ask_name":
+      if (original.length < 3) {
+        return reply("Por favor, ingresa un nombre válido (mínimo 3 caracteres):");
+      }
+      session.data.name = original;
+      session.step = "ask_email";
+      return reply(
+        `Gracias, *${session.data.name}*. 😊\n\n` +
+          "📧 Ahora, escribe tu *correo electrónico*:"
+      );
+
+    case "ask_email":
+      if (!isValidEmail(original)) {
+        return reply(
+          "Ese correo no parece válido. Ingresa un correo electrónico válido.\n" +
+            "Ejemplo: nombre@correo.com"
+        );
+      }
+      session.data.email = original.toLowerCase();
+      session.step = "ask_phone";
+      return reply("📱 Por último, escribe tu *número de teléfono*:");
+
+    case "ask_phone":
+      if (!isValidPhone(original)) {
+        return reply(
+          "Ese número no parece válido. Ingresa un número de teléfono válido.\n" +
+            "Ejemplo: 3001234567"
+        );
+      }
+      session.data.phone = original;
       session.step = "wait_policy";
       return {
         response:
-          "👋 ¡Hola! Bienvenido/a al canal de atención virtual de *INFIBAGUE*.\n\n" +
-          "Soy *INFIBOT*, el asistente virtual, y estoy aquí para ayudarte.\n\n" +
-          "📄 Antes de continuar, te comparto nuestra *Política de Tratamiento de Datos Personales*. " +
-          "Por favor léela y responde:\n\n" +
+          "✅ *Datos registrados:*\n\n" +
+          `👤 *Nombre:* ${session.data.name}\n` +
+          `📧 *Correo:* ${session.data.email}\n` +
+          `📱 *Teléfono:* ${session.data.phone}\n\n` +
+          "📄 Ahora te comparto nuestra *Política de Tratamiento de Datos Personales*.\n" +
+          "Por favor revísala y responde:\n\n" +
           "✅ *SI* → Acepto la política\n" +
           "❌ *NO* → No acepto",
         sendPolicy: true,
@@ -87,265 +208,272 @@ function handleFlow(userId, messageBody) {
 
     case "wait_policy":
       if (text === "si" || text === "sí" || text === "acepto") {
-        session.step = "ask_name";
         session.data.policyAccepted = true;
         session.data.policyAcceptedAt = new Date().toISOString();
-        return {
-          response:
-            "✅ ¡Gracias por aceptar nuestra política de datos!\n\n" +
-            "Necesito algunos datos para brindarte una mejor atención.\n\n" +
-            "📝 Por favor, escribe tu *nombre completo*:",
-          sendPolicy: false,
-          useAI: null,
-        };
+        session.step = "menu";
+        return reply(
+          "✅ ¡Gracias por aceptar la política de datos!\n\n" + MENU_TEXT
+        );
       }
       if (text === "no" || text === "no acepto") {
         session.step = "rejected";
-        return {
-          response:
-            "Entendemos tu decisión. Sin la aceptación de la política de tratamiento de datos, " +
-            "no podemos continuar con la atención.\n\n" +
-            "Si cambias de opinión, puedes escribirnos de nuevo en cualquier momento. " +
-            "También puedes comunicarte directamente con INFIBAGUE:\n\n" +
-            "📞 *Teléfono:* 6082772348\n" +
-            "📧 *Correo:* correspondencia@infibague.gov.co\n" +
-            "🏢 *Dirección:* Carrera 5 calle 60, Barrio La Floresta, Ibagué\n\n" +
-            "¡Que tengas un buen día!",
-          sendPolicy: false,
-          useAI: null,
-        };
+        return reply(
+          "Lo lamento, no podemos continuar sin la aceptación de la política.\n\n" +
+            "Si cambias de opinión, puedes escribirnos de nuevo.\n\n" +
+            "¡Que tengas un buen día! 👋"
+        );
       }
-      return {
-        response: "Por favor, responde *SI* para aceptar la política de datos o *NO* si no la aceptas.",
-        sendPolicy: false,
-        useAI: null,
-      };
+      return reply("Por favor, responde *SI* para aceptar o *NO* para rechazar.");
 
     case "rejected":
       session.step = "greeting";
+      session.data = {};
+      session.pqr = {};
       return handleFlow(userId, messageBody);
 
-    case "ask_name":
-      if (messageBody.trim().length < 3) {
-        return {
-          response: "Por favor, ingresa un nombre válido (mínimo 3 caracteres):",
-          sendPolicy: false,
-          useAI: null,
-        };
-      }
-      session.data.name = messageBody.trim();
-      session.step = "ask_email";
-      return {
-        response:
-          `Gracias, *${session.data.name}*. 😊\n\n` +
-          "📧 Ahora, por favor escribe tu *correo electrónico*:",
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    case "ask_email":
-      if (!isValidEmail(messageBody)) {
-        return {
-          response:
-            "Ese correo no parece válido. Por favor, ingresa un correo electrónico válido.\n" +
-            "Ejemplo: nombre@correo.com",
-          sendPolicy: false,
-          useAI: null,
-        };
-      }
-      session.data.email = messageBody.trim().toLowerCase();
-      session.step = "ask_phone";
-      return {
-        response: "📱 Por último, escribe tu *número de teléfono*:",
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    case "ask_phone":
-      if (!isValidPhone(messageBody)) {
-        return {
-          response:
-            "Ese número no parece válido. Por favor, ingresa un número de teléfono válido.\n" +
-            "Ejemplo: 3001234567",
-          sendPolicy: false,
-          useAI: null,
-        };
-      }
-      session.data.phone = messageBody.trim();
-      session.step = "menu";
-
-      console.log("📋 Registro completado:", session.data);
-
-      return {
-        response:
-          "✅ ¡Registro completado! Estos son tus datos:\n\n" +
-          `👤 *Nombre:* ${session.data.name}\n` +
-          `📧 *Correo:* ${session.data.email}\n` +
-          `📱 *Teléfono:* ${session.data.phone}\n\n` +
-          MENU_TEXT,
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    // ─── MENÚ PRINCIPAL ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 2: MENÚ PRINCIPAL
+    // ═══════════════════════════════════════════════════════════════
 
     case "menu":
       if (text === "1") {
-        session.step = "pqrsd_describe";
-        return {
-          response:
-            "📝 *PQRSD - Peticiones, Quejas, Reclamos, Sugerencias y Denuncias*\n\n" +
-            "Por favor, describe tu solicitud con el mayor detalle posible.\n" +
-            "La IA se encargará de clasificarla y generar un resumen.\n\n" +
-            "✍️ Escribe tu solicitud:",
-          sendPolicy: false,
-          useAI: null,
-        };
+        session.step = "consultas";
+        return reply(
+          "💬 *Consultas*\n\n" +
+            "Escribe tu pregunta de la manera más clara posible y te responderé.\n\n" +
+            "_Escribe *MENU* en cualquier momento para volver al menú principal._"
+        );
       }
       if (text === "2") {
-        session.step = "consultas";
-        return {
-          response:
-            "💬 *Consultas sobre INFIBAGUE*\n\n" +
-            "Puedes preguntarme lo que necesites sobre los servicios de INFIBAGUE.\n" +
-            "Escribe *MENU* en cualquier momento para volver al menú principal.\n\n" +
-            "¿En qué te puedo ayudar?",
-          sendPolicy: false,
-          useAI: null,
-        };
+        session.step = "pqr_area";
+        session.pqr = {};
+        return reply("📝 *Radicar un PQR*\n\n" + PQR_AREAS_TEXT);
       }
       if (text === "3") {
-        session.step = "menu";
-        return {
-          response:
-            "👤 *Atención Personal*\n\n" +
-            "Si necesitas atención personalizada, puedes contactarnos por los siguientes medios:\n\n" +
-            "📞 *Teléfono:* 6082772348\n" +
-            "📧 *Correo:* correspondencia@infibague.gov.co\n" +
-            "🏢 *Dirección:* Carrera 5 calle 60, Barrio La Floresta, Ibagué, Tolima\n\n" +
-            "🕐 *Horarios de atención:*\n" +
-            "Lunes a Jueves: 7:00am - 12:00pm y 2:00pm - 5:00pm\n" +
-            "Viernes: 7:00am - 3:00pm\n\n" +
-            MENU_TEXT,
-          sendPolicy: false,
-          useAI: null,
-        };
+        session.step = "human_check";
+        return handleFlow(userId, messageBody);
       }
-      return {
-        response: "Por favor, escribe *1*, *2* o *3* para seleccionar una opción.\n\n" + MENU_TEXT,
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    // ─── FLUJO PQRSD ───────────────────────────────────────────────
-
-    case "pqrsd_describe":
-      if (messageBody.trim().length < 10) {
-        return {
-          response: "Por favor, describe tu solicitud con más detalle (mínimo 10 caracteres):",
-          sendPolicy: false,
-          useAI: null,
-        };
+      if (text === "4") {
+        session.step = "survey_rating";
+        return reply(
+          "Antes de irte, nos gustaría conocer tu opinión.\n\n" + SURVEY_TEXT
+        );
       }
-      // Guardar el texto original y pedir a la IA que lo clasifique
-      session.data.pqrsdOriginal = messageBody.trim();
-      session.step = "pqrsd_classifying";
-      return {
-        response: null,
-        sendPolicy: false,
-        useAI: "pqrsd",
-      };
+      return reply(
+        "Por favor, escribe *1*, *2*, *3* o *4* para seleccionar una opción.\n\n" + MENU_TEXT
+      );
 
-    case "pqrsd_classifying":
-      // Este estado no debería recibir mensajes directamente,
-      // se maneja desde index.js después de la clasificación IA
-      return {
-        response: "⏳ Estamos procesando tu solicitud, por favor espera un momento...",
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    case "pqrsd_confirm":
-      if (text === "si" || text === "sí" || text === "confirmar") {
-        const radicado = generateRadicado();
-        session.data.pqrsdRadicado = radicado;
-        session.data.pqrsdDate = new Date().toISOString();
-        session.step = "menu";
-
-        console.log("📄 PQRSD registrada:", {
-          radicado,
-          tipo: session.data.pqrsdClassification.tipo,
-          ciudadano: session.data.name,
-          email: session.data.email,
-        });
-
-        return {
-          response:
-            "✅ *¡PQRSD registrada exitosamente!*\n\n" +
-            `📌 *Número de radicado:* ${radicado}\n` +
-            `📋 *Tipo:* ${session.data.pqrsdClassification.tipo}\n` +
-            `📝 *Asunto:* ${session.data.pqrsdClassification.asunto}\n` +
-            `📅 *Fecha:* ${new Date().toLocaleDateString("es-CO")}\n\n` +
-            "Guarda tu número de radicado para hacer seguimiento.\n" +
-            "La solicitud será enviada al área de Atención al Ciudadano de INFIBAGUE.\n\n" +
-            MENU_TEXT,
-          sendPolicy: false,
-          useAI: null,
-        };
-      }
-      if (text === "no" || text === "corregir") {
-        session.step = "pqrsd_describe";
-        session.data.pqrsdOriginal = null;
-        session.data.pqrsdClassification = null;
-        return {
-          response:
-            "De acuerdo, vamos a generar la solicitud de nuevo.\n\n" +
-            "✍️ Por favor, describe nuevamente tu solicitud:",
-          sendPolicy: false,
-          useAI: null,
-        };
-      }
-      return {
-        response: "Por favor, responde *SI* para confirmar o *NO* para corregir tu solicitud.",
-        sendPolicy: false,
-        useAI: null,
-      };
-
-    // ─── FLUJO CONSULTAS ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 3A: CONSULTAS (PREGUNTAS)
+    // ═══════════════════════════════════════════════════════════════
 
     case "consultas":
       if (text === "menu" || text === "menú" || text === "volver") {
         session.step = "menu";
-        return {
-          response: MENU_TEXT,
-          sendPolicy: false,
-          useAI: null,
-        };
+        return reply(MENU_TEXT);
       }
-      // Pasar a la IA para responder la consulta
-      return {
-        response: null,
-        sendPolicy: false,
-        useAI: "consulta",
-      };
+      if (original.length < 5) {
+        return reply(
+          "Tu mensaje es muy corto. Por favor, formula tu pregunta con más detalle para que pueda ayudarte."
+        );
+      }
+      return { response: null, sendPolicy: false, useAI: "consulta" };
+
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 3B: PQR (PETICIÓN, QUEJA, RECURSO)
+    // ═══════════════════════════════════════════════════════════════
+
+    case "pqr_area":
+      if (!PQR_AREAS_MAP[text]) {
+        return reply("Por favor, selecciona un número del *1* al *6*.\n\n" + PQR_AREAS_TEXT);
+      }
+      session.pqr.area = PQR_AREAS_MAP[text];
+      session.step = "pqr_type";
+      return reply(
+        `Has seleccionado: *${session.pqr.area}*\n\n` + PQR_TYPE_TEXT
+      );
+
+    case "pqr_type":
+      if (!PQR_TYPES_MAP[text]) {
+        return reply("Por favor, selecciona *1*, *2* o *3*.\n\n" + PQR_TYPE_TEXT);
+      }
+      session.pqr.type = PQR_TYPES_MAP[text];
+      session.step = "pqr_describe";
+      return reply(
+        `📌 *Tipo:* ${session.pqr.type} | *Área:* ${session.pqr.area}\n\n` +
+          "✍️ Ahora, describe tu solicitud con el mayor detalle posible.\n" +
+          "Incluye: qué sucedió, dónde, cuándo, y cualquier dato relevante."
+      );
+
+    case "pqr_describe":
+      if (original.length < 15) {
+        return reply(
+          "Por favor, describe tu solicitud con más detalle (mínimo 15 caracteres) para que podamos procesarla correctamente."
+        );
+      }
+      session.pqr.description = original;
+      session.step = "pqr_classifying";
+      return { response: null, sendPolicy: false, useAI: "pqr_classify" };
+
+    case "pqr_classifying":
+      return reply("⏳ Procesando tu solicitud, por favor espera...");
+
+    case "pqr_confirm":
+      if (text === "si" || text === "sí" || text === "confirmar") {
+        const radicado = generateRadicado();
+        session.pqr.radicado = radicado;
+        session.pqr.date = new Date().toISOString();
+        session.step = "survey_rating";
+
+        console.log("📄 PQR radicado:", {
+          radicado,
+          area: session.pqr.area,
+          tipo: session.pqr.type,
+          ciudadano: session.data.name,
+          email: session.data.email,
+        });
+
+        return reply(
+          "✅ *¡Tu PQR ha sido radicado con éxito!*\n\n" +
+            `📌 *Número de radicado:* ${radicado}\n` +
+            `🏢 *Área:* ${session.pqr.area}\n` +
+            `📋 *Tipo:* ${session.pqr.type}\n` +
+            `📝 *Asunto:* ${session.pqr.summary}\n` +
+            `📅 *Fecha:* ${new Date().toLocaleDateString("es-CO")}\n` +
+            `👤 *Solicitante:* ${session.data.name}\n\n` +
+            "Guarda tu número de radicado para seguimiento.\n" +
+            "La solicitud será enviada al área de Atención al Ciudadano.\n\n" +
+            "Ahora, nos gustaría conocer tu opinión.\n\n" +
+            SURVEY_TEXT
+        );
+      }
+      if (text === "no" || text === "corregir") {
+        session.pqr.description = null;
+        session.pqr.summary = null;
+        session.step = "pqr_describe";
+        return reply(
+          "De acuerdo, vamos a generar la solicitud de nuevo.\n\n" +
+            "✍️ Describe nuevamente tu solicitud:"
+        );
+      }
+      return reply("Responde *SI* para confirmar o *NO* para corregir.");
+
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 3C: ATENCIÓN HUMANA
+    // ═══════════════════════════════════════════════════════════════
+
+    case "human_check": {
+      if (isBusinessHours()) {
+        session.step = "human_waiting";
+        const ticket = `TKT-${Date.now()}`;
+        session.data.supportTicket = ticket;
+
+        console.log("🎫 Ticket de soporte generado:", {
+          ticket,
+          ciudadano: session.data.name,
+          email: session.data.email,
+        });
+
+        return reply(
+          "👤 *Atención Personal*\n\n" +
+            "Estamos en *horario laboral*. Se ha generado un ticket para que un agente te atienda.\n\n" +
+            `🎫 *Ticket:* ${ticket}\n\n` +
+            "📞 *Teléfono:* 6082772348\n" +
+            "📧 *Correo:* correspondencia@infibague.gov.co\n" +
+            "🏢 *Dirección:* Carrera 5 calle 60, Barrio La Floresta, Ibagué\n\n" +
+            "Un funcionario se comunicará contigo pronto. " +
+            "Si prefieres, también puedes llamar o acercarte a nuestras oficinas.\n\n" +
+            "Mientras tanto, califica tu experiencia con InfiBot.\n\n" +
+            SURVEY_TEXT
+        );
+      }
+
+      session.step = "menu";
+      return reply(
+        "👤 *Atención Personal*\n\n" +
+          "⏰ En este momento *no estamos en horario de atención*.\n\n" +
+          "🕐 *Horarios de atención:*\n" +
+          "Lunes a Jueves: 7:00am - 12:00pm y 2:00pm - 5:00pm\n" +
+          "Viernes: 7:00am - 3:00pm\n\n" +
+          "📞 *Teléfono:* 6082772348\n" +
+          "📧 *Correo:* correspondencia@infibague.gov.co\n" +
+          "🏢 *Dirección:* Carrera 5 calle 60, Barrio La Floresta, Ibagué\n\n" +
+          "Por favor, intenta de nuevo en horario de oficina.\n\n" +
+          MENU_TEXT
+      );
+    }
+
+    case "human_waiting":
+      if (text === "menu" || text === "menú" || text === "volver") {
+        session.step = "survey_rating";
+        return reply(
+          "Antes de volver, califica tu experiencia.\n\n" + SURVEY_TEXT
+        );
+      }
+      return reply(
+        "Tu ticket de soporte ya fue generado. Un funcionario se comunicará contigo.\n\n" +
+          "Escribe *MENU* cuando desees continuar."
+      );
+
+    // ═══════════════════════════════════════════════════════════════
+    // FASE 4: ENCUESTA DE SATISFACCIÓN Y CIERRE
+    // ═══════════════════════════════════════════════════════════════
+
+    case "survey_rating": {
+      const rating = parseInt(text);
+      if (isNaN(rating) || rating < 1 || rating > 5) {
+        return reply("Por favor, escribe un número del *1* al *5*.\n\n" + SURVEY_TEXT);
+      }
+      session.data.surveyRating = rating;
+      session.step = "survey_comment";
+      const stars = "⭐".repeat(rating);
+      return reply(
+        `${stars} ¡Gracias por tu calificación!\n\n` +
+          "💬 ¿Tienes algún comentario adicional sobre tu experiencia?\n\n" +
+          "Escribe tu comentario o escribe *NO* si no tienes comentarios."
+      );
+    }
+
+    case "survey_comment":
+      if (text !== "no") {
+        session.data.surveyComment = original;
+      }
+      session.step = "goodbye";
+
+      console.log("📊 Encuesta completada:", {
+        ciudadano: session.data.name,
+        rating: session.data.surveyRating,
+        comment: session.data.surveyComment || "Sin comentarios",
+      });
+
+      return reply(GOODBYE_TEXT);
+
+    case "goodbye":
+      // Si el usuario escribe de nuevo después del adiós, reiniciar
+      session.step = "greeting";
+      session.data = {};
+      session.pqr = {};
+      return handleFlow(userId, messageBody);
 
     default:
       session.step = "greeting";
+      session.data = {};
+      session.pqr = {};
       return handleFlow(userId, messageBody);
   }
 }
 
-/**
- * Guarda la clasificación de la IA en la sesión y avanza al paso de confirmación.
- */
-function setPQRSDClassification(userId, classification) {
-  const session = getSession(userId);
-  session.data.pqrsdClassification = classification;
-  session.step = "pqrsd_confirm";
+// Helper para respuestas simples
+function reply(text) {
+  return { response: text, sendPolicy: false, useAI: null };
 }
 
-function getSession_public(userId) {
-  return getSession(userId);
+// ─── FUNCIONES PÚBLICAS ─────────────────────────────────────────────
+
+function setPQRClassification(userId, classification) {
+  const session = getSession(userId);
+  session.pqr.summary = classification.resumen;
+  session.step = "pqr_confirm";
 }
 
 function getUserData(userId) {
@@ -353,11 +481,16 @@ function getUserData(userId) {
   return session ? session.data : null;
 }
 
+function getPQRData(userId) {
+  const session = sessions.get(userId);
+  return session ? session.pqr : null;
+}
+
 module.exports = {
   handleFlow,
   getUserData,
-  setPQRSDClassification,
-  getSession: getSession_public,
+  getPQRData,
+  setPQRClassification,
+  getSession,
   POLICY_PDF_PATH,
-  MENU_TEXT,
 };

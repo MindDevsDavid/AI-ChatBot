@@ -4,7 +4,7 @@ const config = require("./config");
 const groq = new Groq({ apiKey: config.groqApiKey });
 
 /**
- * Envía un mensaje a Groq y retorna la respuesta (consultas generales).
+ * Responde consultas generales sobre INFIBAGUE.
  */
 async function getAIResponse(userMessage) {
   const chatCompletion = await groq.chat.completions.create({
@@ -27,18 +27,24 @@ async function getAIResponse(userMessage) {
 }
 
 /**
- * Clasifica una PQRSD y genera un resumen estructurado.
- * Retorna un objeto JSON con: tipo, resumen, asunto.
+ * Clasifica y resume un PQR dado el área, tipo y descripción del ciudadano.
+ * Retorna { resumen: string }
  */
-async function classifyPQRSD(userMessage) {
+async function classifyPQR(area, tipo, description) {
   const chatCompletion = await groq.chat.completions.create({
     messages: [
-      { role: "system", content: config.pqrsdPrompt },
-      { role: "user", content: userMessage },
+      { role: "system", content: config.pqrPrompt },
+      {
+        role: "user",
+        content:
+          `Área: ${area}\n` +
+          `Tipo: ${tipo}\n` +
+          `Descripción del ciudadano: ${description}`,
+      },
     ],
     model: config.model,
     temperature: 0.3,
-    max_completion_tokens: 300,
+    max_completion_tokens: 200,
     response_format: { type: "json_object" },
   });
 
@@ -46,4 +52,4 @@ async function classifyPQRSD(userMessage) {
   return JSON.parse(text);
 }
 
-module.exports = { getAIResponse, classifyPQRSD };
+module.exports = { getAIResponse, classifyPQR };

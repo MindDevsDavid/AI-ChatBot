@@ -1,10 +1,11 @@
 const { MessageMedia } = require("whatsapp-web.js");
 const { createWhatsAppClient } = require("./whatsapp");
-const { getAIResponse, classifyPQRSD } = require("./ai");
+const { getAIResponse, classifyPQR } = require("./ai");
 const {
   handleFlow,
   getUserData,
-  setPQRSDClassification,
+  getPQRData,
+  setPQRClassification,
   getSession,
   POLICY_PDF_PATH,
 } = require("./flow");
@@ -19,7 +20,7 @@ if (!config.groqApiKey || config.groqApiKey === "tu_api_key_aqui") {
   process.exit(1);
 }
 
-console.log("🤖 Iniciando INFIBOT - ChatBot de WhatsApp con IA...\n");
+console.log("🤖 Iniciando INFIBOT - Asistente Virtual de INFIBAGUÉ...\n");
 
 const client = createWhatsAppClient(async (message) => {
   const chat = await message.getChat();
@@ -32,63 +33,76 @@ const client = createWhatsAppClient(async (message) => {
 
     const result = handleFlow(userId, message.body);
 
-    // Enviar el PDF de política de datos si el flujo lo indica
+    // Enviar PDF de política de datos si el flujo lo indica
     if (result.sendPolicy) {
       const policyPdf = MessageMedia.fromFilePath(POLICY_PDF_PATH);
       await chat.sendMessage(policyPdf, {
-        caption: "📄 Política de Tratamiento de Datos Personales - INFIBAGUE",
+        caption: "📄 Política de Tratamiento de Datos Personales - INFIBAGUÉ",
       });
     }
 
-    // Si el flujo necesita la IA para clasificar PQRSD
-    if (result.useAI === "pqrsd") {
-      const userData = getUserData(userId);
+    // ─── RAMA: Clasificación PQR con IA ─────────────────────────
+    if (result.useAI === "pqr_classify") {
       const session = getSession(userId);
+      const userData = getUserData(userId);
+      const pqr = getPQRData(userId);
 
       try {
-        const classification = await classifyPQRSD(session.data.pqrsdOriginal);
-        setPQRSDClassification(userId, classification);
+        await chat.sendStateTyping();
+        const classification = await classifyPQR(
+          pqr.area,
+          pqr.type,
+          pqr.description
+        );
+        setPQRClassification(userId, classification);
 
-        const confirmMsg =
-          "📋 *Resumen de tu solicitud:*\n\n" +
-          `📌 *Tipo:* ${classification.tipo}\n` +
-          `📝 *Asunto:* ${classification.asunto}\n` +
-          `📄 *Resumen:* ${classification.resumen}\n\n` +
-          `👤 *Solicitante:* ${userData.name}\n` +
-          `📧 *Correo:* ${userData.email}\n` +
-          `📱 *Teléfono:* ${userData.phone}\n\n` +
-          "¿Los datos son correctos?\n\n" +
-          "✅ *SI* → Confirmar y radicar\n" +
-          "❌ *NO* → Corregir solicitud";
-
-        await message.reply(confirmMsg);
-        console.log(`📤 PQRSD clasificada para ${userId}: ${classification.tipo}`);
-      } catch (error) {
-        console.error("❌ Error al clasificar PQRSD:", error.message);
-        // Volver al paso de descripción si falla la IA
-        const session = getSession(userId);
-        session.step = "pqrsd_describe";
         await message.reply(
-          "Hubo un error al procesar tu solicitud. Por favor, intenta describirla de nuevo:"
+          "📋 *Resumen de tu PQR:*\n\n" +
+            `🏢 *Área:* ${pqr.area}\n` +
+            `📌 *Tipo:* ${pqr.type}\n` +
+            `📝 *Resumen:* ${classification.resumen}\n\n` +
+            `👤 *Solicitante:* ${userData.name}\n` +
+            `📧 *Correo:* ${userData.email}\n` +
+            `📱 *Teléfono:* ${userData.phone}\n\n` +
+            "¿Los datos son correctos?\n\n" +
+            "✅ *SI* → Confirmar y radicar\n" +
+            "❌ *NO* → Corregir solicitud"
+        );
+        console.log(`📤 PQR clasificado para ${userId}`);
+      } catch (error) {
+        console.error("❌ Error al clasificar PQR:", error.message);
+        session.step = "pqr_describe";
+        await message.reply(
+          "Hubo un error al procesar tu solicitud. Por favor, descríbela de nuevo:"
         );
       }
       return;
     }
 
-    // Si el flujo necesita la IA para responder una consulta
+    // ─── RAMA: Consulta libre con IA ────────────────────────────
     if (result.useAI === "consulta") {
       const userData = getUserData(userId);
-      const contextMessage = `[El ciudadano se llama ${userData.name}] ${message.body}`;
 
-      const response = await getAIResponse(contextMessage);
-      await message.reply(
-        response + "\n\n_Escribe *MENU* para volver al menú principal._"
-      );
-      console.log(`📤 Consulta IA enviada a ${userId}`);
+      try {
+        await chat.sendStateTyping();
+        const contextMessage = `[El ciudadano se llama ${userData.name}] ${message.body}`;
+        const response = await getAIResponse(contextMessage);
+
+        await message.reply(
+          response + "\n\n_Escribe *MENU* para volver al menú principal._"
+        );
+        console.log(`📤 Consulta IA enviada a ${userId}`);
+      } catch (error) {
+        console.error("❌ Error en consulta IA:", error.message);
+        await message.reply(
+          "No pude procesar tu consulta en este momento. " +
+            "Por favor, intenta reformular tu pregunta o escribe *MENU* para volver al menú."
+        );
+      }
       return;
     }
 
-    // Respuesta directa del flujo
+    // ─── Respuesta directa del flujo ────────────────────────────
     if (result.response) {
       await message.reply(result.response);
       console.log(`📤 Respuesta enviada a ${userId}`);
